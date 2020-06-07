@@ -233,11 +233,41 @@ long HX711::read_average(byte times) {
 }
 
 double HX711::get_value(byte times) {
-	return read_average(times) - OFFSET;
+	return read_average(times) - OFFSET[GAIN];
 }
 
 float HX711::get_units(byte times) {
-	return get_value(times) / SCALE;
+	return get_value(times) / SCALE[GAIN];
+}
+
+#define CHANNEL_A 3 // Channel A, gain of 64
+#define CHANNEL_B 2 // Channel B, gain of 32
+
+
+double HX711::get_value_A(byte times) {
+  byte gain = GAIN;
+  GAIN = CHANNEL_A;
+  read(); // read and throw away, resetting the Channel
+  float value = read_average(times) - OFFSET[GAIN];
+  GAIN = gain; // reset the gain
+	return value;
+}
+
+double HX711::get_value_B(byte times) {
+  byte gain = GAIN;
+  GAIN = CHANNEL_B; // Channel A, gain of 64
+  read(); // read and throw away, resetting the Channel
+  float value = read_average(times) - OFFSET[GAIN];
+  GAIN = gain; // reset the gain
+	return value;
+}
+
+float HX711::get_units_A(byte times) {
+	return get_value_A(times) / SCALE[3];
+}
+
+float HX711::get_units_B(byte times) {
+	return get_value_B(times) / SCALE[2];
 }
 
 void HX711::tare(byte times) {
@@ -245,20 +275,36 @@ void HX711::tare(byte times) {
 	set_offset(sum);
 }
 
+void HX711::tare_A(byte times) {
+  OFFSET[CHANNEL_A] += get_value_A(times);
+}
+
+void HX711::tare_B(byte times) {
+  OFFSET[CHANNEL_B] += get_value_B(times);
+}
+
 void HX711::set_scale(float scale) {
-	SCALE = scale;
+	SCALE[GAIN] = scale;
 }
 
 float HX711::get_scale() {
-	return SCALE;
+	return SCALE[GAIN];
 }
 
 void HX711::set_offset(long offset) {
-	OFFSET = offset;
+	OFFSET[GAIN] = offset;
 }
 
 long HX711::get_offset() {
-	return OFFSET;
+	return OFFSET[GAIN];
+}
+
+void HX711::set_value_A(long value) {
+  SCALE[CHANNEL_A] = get_value_A() / value;
+}
+
+void HX711::set_value_B(long value) {
+  SCALE[CHANNEL_B] = get_value_A() / value;
 }
 
 void HX711::power_down() {
