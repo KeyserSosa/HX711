@@ -22,8 +22,11 @@ class HX711
 		byte PD_SCK;	// Power Down and Serial Clock Input Pin
 		byte DOUT;		// Serial Data Output Pin
 		byte GAIN = 1;		// amplification factor
+		byte NEXT_GAIN = 1; // gain of last reading
+		byte ROLLING = 3;  // rolling average to keep
 		long OFFSET[3] = {0, 0, 0};	// used for tare weight
-		float SCALE[3] = {1, 1, 1};	// used to return weight in grams, kg, ounces, whatever
+		float SCALE[3] = {433.85, 113.40, 217.25};	// used to return weight in grams
+		long VALUES[3] = {0, 0, 0};
 
 	public:
 
@@ -52,33 +55,39 @@ class HX711
 		// channel A can be set for a 128 or 64 gain; channel B has a fixed 32 gain
 		// depending on the parameter, the channel is also set to either A or B
 		void set_gain(byte gain = 128);
+		byte get_gain();
+		void set_channel(byte channel);
 
 		// waits for the chip to be ready and returns a reading
 		long read();
+		void read_all();
 
 		// returns an average reading; times = how many times to read
 		long read_average(byte times = 10);
 
 		// returns (read_average() - OFFSET), that is the current value without the tare weight; times = how many readings to do
 		double get_value(byte times = 1);
+		double get_rolling();
 
 		// returns (read_average() - OFFSET), that is the current value without the tare weight; times = how many readings to do
 		double get_value_A(byte times = 1);
+		double get_rolling_A();
 
 		// returns (read_average() - OFFSET), that is the current value without the tare weight; times = how many readings to do
 		double get_value_B(byte times = 1);
+		double get_rolling_B();
 
 		// returns get_value() divided by SCALE, that is the raw value divided by a value obtained via calibration
 		// times = how many readings to do
-		float get_units(byte times = 1);
+		float get_units(byte cache = 1, byte times = 1);
 
 		// returns get_value() divided by SCALE, that is the raw value divided by a value obtained via calibration
 		// times = how many readings to do
-		float get_units_A(byte times = 1);
+		float get_units_A(byte cache = 1, byte times = 1);
 
 		// returns get_value() divided by SCALE, that is the raw value divided by a value obtained via calibration
 		// times = how many readings to do
-		float get_units_B(byte times = 1);
+		float get_units_B(byte cache = 1, byte times = 1);
 
 		// set the OFFSET value for tare weight; times = how many times to read the tare value
 		void tare(byte times = 10);
@@ -105,7 +114,7 @@ class HX711
 		void set_offset(long offset = 0);
 
 		// get the current OFFSET
-		long get_offset();
+		double get_offset();
 
 		// puts the chip into power down mode
 		void power_down();

@@ -82,20 +82,36 @@ bool HX711::is_ready() {
 	return digitalRead(DOUT) == LOW;
 }
 
+void HX711::set_channel(byte channel) {
+  GAIN = channel;
+}
+
 void HX711::set_gain(byte gain) {
 	switch (gain) {
 		case 128:		// channel A, gain factor 128
-			GAIN = 1;
+      set_channel(1);
 			break;
 		case 64:		// channel A, gain factor 64
-			GAIN = 3;
+      set_channel(3);
 			break;
 		case 32:		// channel B, gain factor 32
-			GAIN = 2;
+      set_channel(2);
 			break;
 	}
-
 }
+
+byte HX711::get_gain() {
+	switch (GAIN) {
+		case 1:		// channel A, gain factor 128
+      return 128;
+		case 3:		// channel A, gain factor 64
+      return 64;
+		case 2:		// channel B, gain factor 32
+      return 32;
+	}
+  return 0;
+}
+
 
 long HX711::read() {
 
@@ -106,6 +122,10 @@ long HX711::read() {
 	unsigned long value = 0;
 	uint8_t data[3] = { 0 };
 	uint8_t filler = 0x00;
+  // we are going to store the current gain as the next gain.
+  // keep track of what the gain is for this reading so we can
+  // keep a rolling average below.
+  byte last_gain = NEXT_GAIN;
 
 	// Protect the read sequence from system interrupts.  If an interrupt occurs during
 	// the time the PD_SCK signal is high it will stretch the length of the clock pulse.
@@ -154,6 +174,10 @@ long HX711::read() {
 		#endif
 	}
 
+  // reset the gain to mark what the next read will be (so we can check
+  // if we need to throw out the next reading)
+  NEXT_GAIN = GAIN;
+
 	#if IS_FREE_RTOS
 	// End of critical section.
 	portEXIT_CRITICAL(&mux);
@@ -179,7 +203,39 @@ long HX711::read() {
 			| static_cast<unsigned long>(data[1]) << 8
 			| static_cast<unsigned long>(data[0]) );
 
-	return static_cast<long>(value);
+  // Store the rolling average for this channel
+	long reading = static_cast<long>(value);
+  long count = static_cast<long>(ROLLING);
+  VALUES[last_gain-1] = (VALUES[last_gain-1] * (count-1.0) + reading) / count;
+
+  return reading;
+}
+
+void HX711::read_all() {
+  // this function is counterintuitive.  Setting the gain sets it on the
+  // NEXT read, so the initial read() call will be set based on NEXT_GAIN
+  // while the GAIN changes will affect the read() after that.
+  switch(NEXT_GAIN) {
+     case 1:
+       GAIN = 2;
+       read();
+       GAIN = 3;
+       read();
+       break;
+     case 2:
+       GAIN = 1;
+       read();
+       GAIN = 3;
+       read();
+       break;
+     case 3:
+       GAIN = 2;
+       read();
+       GAIN = 1;
+       read();
+       break;
+  }
+  read();
 }
 
 void HX711::wait_ready(unsigned long delay_ms) {
@@ -232,23 +288,45 @@ long HX711::read_average(byte times) {
 	return sum / times;
 }
 
-double HX711::get_value(byte times) {
-	return read_average(times) - OFFSET[GAIN];
-}
-
-float HX711::get_units(byte times) {
-	return get_value(times) / SCALE[GAIN];
-}
-
 #define CHANNEL_A 3 // Channel A, gain of 64
 #define CHANNEL_B 2 // Channel B, gain of 32
+
+
+double HX711::get_rolling() {
+  return VALUES[GAIN-1] - OFFSET[GAIN-1];
+}
+
+double HX711::get_rolling_A() {
+  return VALUES[CHANNEL_A-1] - OFFSET[CHANNEL_A-1];
+}
+
+double HX711::get_rolling_B() {
+  return VALUES[CHANNEL_B-1] - OFFSET[CHANNEL_B-1];
+}
+
+
+double HX711::get_value(byte times) {
+  if (GAIN != NEXT_GAIN) {
+    read(); // read and throw away, resetting the Channel
+  }
+	return read_average(times) - OFFSET[GAIN-1];
+}
+
+float HX711::get_units(byte cache, byte times) {
+  if (cache) {
+    return (VALUES[GAIN-1] - OFFSET[GAIN-1]) / SCALE[GAIN-1];
+  }
+	return get_value(times) / SCALE[GAIN-1];
+}
 
 
 double HX711::get_value_A(byte times) {
   byte gain = GAIN;
   GAIN = CHANNEL_A;
-  read(); // read and throw away, resetting the Channel
-  float value = read_average(times) - OFFSET[GAIN];
+  if (GAIN != NEXT_GAIN) {
+    read(); // read and throw away, resetting the Channel
+  }
+  float value = read_average(times) - OFFSET[GAIN-1];
   GAIN = gain; // reset the gain
 	return value;
 }
@@ -256,55 +334,64 @@ double HX711::get_value_A(byte times) {
 double HX711::get_value_B(byte times) {
   byte gain = GAIN;
   GAIN = CHANNEL_B; // Channel A, gain of 64
-  read(); // read and throw away, resetting the Channel
-  float value = read_average(times) - OFFSET[GAIN];
+  if (GAIN != NEXT_GAIN) {
+    read(); // read and throw away, resetting the Channel
+  }
+  float value = read_average(times) - OFFSET[GAIN-1];
   GAIN = gain; // reset the gain
 	return value;
 }
 
-float HX711::get_units_A(byte times) {
-	return get_value_A(times) / SCALE[3];
+float HX711::get_units_A(byte cache, byte times) {
+  if (cache) {
+    return (VALUES[CHANNEL_A-1] - OFFSET[CHANNEL_A-1]) / SCALE[CHANNEL_A-1];
+  }
+	return get_value_A(times) / SCALE[CHANNEL_A-1];
 }
 
-float HX711::get_units_B(byte times) {
-	return get_value_B(times) / SCALE[2];
+float HX711::get_units_B(byte cache, byte times) {
+  if (cache) {
+    return (VALUES[CHANNEL_B-1] - OFFSET[CHANNEL_B-1]) / SCALE[CHANNEL_B-1];
+  }
+	return get_value_B(times) / SCALE[CHANNEL_B-1];
 }
 
+// TARE / Zero
 void HX711::tare(byte times) {
 	double sum = read_average(times);
 	set_offset(sum);
 }
 
 void HX711::tare_A(byte times) {
-  OFFSET[CHANNEL_A] += get_value_A(times);
+  OFFSET[CHANNEL_A-1] += get_value_A(times);
 }
 
 void HX711::tare_B(byte times) {
-  OFFSET[CHANNEL_B] += get_value_B(times);
+  OFFSET[CHANNEL_B-1] += get_value_B(times);
 }
 
 void HX711::set_scale(float scale) {
-	SCALE[GAIN] = scale;
+	SCALE[GAIN-1] = scale;
 }
 
 float HX711::get_scale() {
-	return SCALE[GAIN];
+	return SCALE[GAIN-1];
 }
 
 void HX711::set_offset(long offset) {
-	OFFSET[GAIN] = offset;
+	OFFSET[GAIN-1] = offset;
 }
 
-long HX711::get_offset() {
-	return OFFSET[GAIN];
+double HX711::get_offset() {
+	return OFFSET[GAIN-1];
 }
 
 void HX711::set_value_A(long value) {
-  SCALE[CHANNEL_A] = get_value_A() / value;
+  SCALE[CHANNEL_A-1] = get_value_A() / value;
 }
 
 void HX711::set_value_B(long value) {
-  SCALE[CHANNEL_B] = get_value_A() / value;
+  SCALE[CHANNEL_B-1] = get_value_A() / value;
 }
 
 void HX711::power_down() {
